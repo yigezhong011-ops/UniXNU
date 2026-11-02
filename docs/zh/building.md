@@ -344,3 +344,5 @@ ramdisk 优先使用负载输出，也可以用 `--ramdisk FILE`，或用 `--ram
 - [构建内核](/zh/guide/build-kernel)介绍内核开关和静态库。
 - [启动镜像](/zh/guide/boot)介绍 fastboot 命令。
 - [参考](/zh/reference/output-layout)列出报告字段。
+
+Linux 上构建 fuxi 21H461 时，compiler-rt 优先使用匹配版本的 Libc 头。Linux 警告兼容参数覆盖 unsafe-buffer 和重复头诊断，保留语义检查。设备修复与模板打包见 Kerfand/unixnu-fuxi0721 的 old 分支 USB-RESTORE-20261102.md。

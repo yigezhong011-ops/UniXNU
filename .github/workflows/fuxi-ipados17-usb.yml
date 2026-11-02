@@ -1,0 +1,134 @@
+name: Fuxi iPadOS 17 USB
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/fuxi-ipados17-usb]
+    paths: ['.github/workflows/fuxi-ipados17-usb.yml', 'scripts/ci/fuxi17-*.py']
+permissions:
+  contents: read
+concurrency:
+  group: fuxi-ipados17-usb-${{ github.ref }}
+  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
+env:
+  HOMEBREW_NO_AUTO_UPDATE: 1
+  HOMEBREW_NO_INSTALL_CLEANUP: 1
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 120
+    env:
+      UNIXNU_DEVICE: ${{ github.workspace }}/device
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Check out fuxi old device
+        uses: actions/checkout@v4
+        with:
+          repository: Kerfand/unixnu-fuxi0721
+          ref: eb5165c9ae759880818956d8f042a5f8f97124df # old, USB restore and static ABI proof
+          path: device
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Tools and source identity
+        run: |
+          brew install llvm lld mtools dtc unifdef ninja cmake
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix unifdef)/bin" >> "$GITHUB_PATH"
+          python3 scripts/ci/fuxi17-check-inputs.py
+          xcodebuild -version
+      - name: Restore prepared reference and public root policies
+        id: prepared
+        uses: actions/cache/restore@v4
+        with:
+          key: fuxi17-prepared-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.gitmodules', 'feeds.toml', 'device/feeds.toml', 'device/unixnu.lock', 'device/configs/fuxi_bootstrap_defconfig', 'device/scripts/fuxi-kernel-baseline.sh', 'device/patches/xnu/*.patch') }}
+          path: |
+            out/feeds
+            out/fuxi/tree/.cache
+            out/fuxi/tree/build
+            out/fuxi/kernel
+            out/ipsw/21H461/kernelcache.decompressed
+            device/build/native-prelink
+            device/build/xnu-prelink
+      - name: Build link-only ABI reference
+        if: steps.prepared.outputs.cache-hit != 'true'
+        run: |
+          ./unixnu defconfig fuxi_bootstrap_defconfig -D device
+          ./unixnu tree -D device
+          (cd out/fuxi/tree && python3 scripts/build-fuxi-link-stubs.py)
+          FUXI_USB_REFERENCE_ONLY=1 ./unixnu build kernel -D device -j 8
+          python3 scripts/ci/fuxi17-stage-reference.py
+      - name: Prepare unchanged 21H461 root policies
+        if: steps.prepared.outputs.cache-hit != 'true'
+        run: |
+          ./unixnu ipsw fetch OS 'Cryptex1,SystemOS' -D device
+          mkdir -p device/.cache/firmware/target-volumes
+          ln -s "$GITHUB_WORKSPACE/out/ipsw/21H461/044-76034-038.dmg" device/.cache/firmware/target-volumes/044-76034-038.dmg
+          (cd out/fuxi/tree && python3 scripts/build-fuxi-verified-root-policy.py)
+          # The full build consumes the signed manifests and public anchor.
+          # Never put the disposable signing private key into an Actions cache.
+          python3 -c "from pathlib import Path; Path('out/fuxi/tree/build/verified-root-fuxi/keys/owner.pem').unlink()"
+      - name: Cache prepared reference and public policies
+        if: steps.prepared.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          key: ${{ steps.prepared.outputs.cache-primary-key }}
+          path: |
+            out/feeds
+            out/fuxi/tree/.cache
+            out/fuxi/tree/build
+            out/fuxi/kernel
+            out/ipsw/21H461/kernelcache.decompressed
+            device/build/native-prelink
+            device/build/xnu-prelink
+      - name: Validate original Legacy metadata and refusal controls
+        run: |
+          python3 device/tests/check-legacy-metadata.py --kernelcache out/ipsw/21H461/kernelcache.decompressed --kit kits/XnuPrelink
+      - name: Build full fuxi kernel with USB
+        run: |
+          ./unixnu defconfig fuxi_full_defconfig -D device
+          ./unixnu status --json -D device > out/fuxi17-usb/resolved.json
+          ./unixnu build kernel -D device -j 8
+          python3 scripts/ci/fuxi17-check-kernel.py
+      - name: Upload full kernel and USB reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuxi-ipados17-usb-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            out/fuxi/kernel/kernel.macho
+            out/fuxi/kernel/kernel.json
+            out/fuxi17-usb/*.json
+            out/fuxi/tree/.cache/fuxi-qud-build/build-report.json
+            out/fuxi/tree/.cache/fuxi-qud-model-check/check-report.json
+            out/fuxi/tree/.cache/fuxi-qud-xnu-check/xnu-check-report.json
+      - name: Upload diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuxi-ipados17-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            out/fuxi/logs/*.log
+            out/fuxi/tree/build/**/compile.log
+            out/fuxi/tree/build/**/compile-command.json
+            out/fuxi17-usb/*.json
+            out/fuxi/tree/.cache/fuxi-qud-*/**/*.log
+      - name: Summary
+        if: always()
+        env:
+          STATUS: ${{ job.status }}
+        run: |
+          printf '## fuxi iPadOS 17.7.11 / 21H461 USB\n\nStatus: %s\n\n' "$STATUS" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Full UFS/GPU configuration, Darwin23 USB hooks, exact-stream DMA takeover, no global SMMU bypass. Hardware enumeration and received logs remain to be tested.\n' >> "$GITHUB_STEP_SUMMARY"

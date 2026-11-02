@@ -123,7 +123,7 @@ def build_cc_kext():
         subprocess.run(['xcrun', 'clang', '-target', 'arm64-apple-ios17.0', '-arch', 'arm64', '-isysroot', FAKEROOT,
                         '-mkernel', '-DKERNEL_USE', '-O3', '-fPIC', '-w',
                         '-I', rt / 'include', '-I', FAKEROOT / 'System/Library/Frameworks/Kernel.framework/Headers',
-                        '-idirafter', src / 'Libc/include', '-idirafter', XNU / 'libsyscall/wrappers',
+                        '-I', src / 'Libc/include', '-idirafter', XNU / 'libsyscall/wrappers',
                         '-c', rt / f'lib/profile/{name}.c', '-o', objects / f'{name}.o'], check=True)
     subprocess.run(['xcrun', 'libtool', '-static', '-o', out, *(objects / f'{n}.o' for n in PROFILE_SOURCES)],
                    check=True)

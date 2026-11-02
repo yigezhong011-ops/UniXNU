@@ -357,3 +357,5 @@ All output goes to `out/`:
 - [Build the kernel](/guide/build-kernel) describes the kernel flags and archives.
 - [Boot the image](/guide/boot) describes the fastboot commands.
 - [Reference](/reference/output-layout) lists every report field.
+
+Linux fuxi 21H461 builds use the matching Libc headers ahead of SDK C headers when building compiler-rt. Linux-only warning compatibility also covers unsafe-buffer and duplicate-header diagnostics; semantic build checks remain enabled. Device integration and template packaging are recorded in Kerfand/unixnu-fuxi0721, branch old, USB-RESTORE-20261102.md.
